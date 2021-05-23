@@ -1,4 +1,6 @@
-# Google utils: https://cloud.google.com/storage/docs/reference/libraries
+# This file contains google utils: https://cloud.google.com/storage/docs/reference/libraries
+# pip install --upgrade google-cloud-storage
+# from google.cloud import storage
 
 import os
 import platform
@@ -16,13 +18,15 @@ def gsutil_getsize(url=''):
 
 
 def attempt_download(weights):
+    '''
     # Attempt to download pretrained weights if not found locally
+    # 如果在本地找不到，请尝试下载经过预训练的权重
+    '''
     weights = weights.strip().replace("'", '')
-    file = Path(weights).name.lower()
+    file = Path(weights).name
 
     msg = weights + ' missing, try downloading from https://github.com/ultralytics/yolov5/releases/'
     models = ['yolov5s.pt', 'yolov5m.pt', 'yolov5l.pt', 'yolov5x.pt']  # available models
-    redundant = False  # offer second download option
 
     if file in models and not os.path.isfile(weights):
         # Google Drive
@@ -35,13 +39,12 @@ def attempt_download(weights):
         #    return
 
         try:  # GitHub
-            url = 'https://github.com/ultralytics/yolov5/releases/download/v3.1/' + file
+            url = 'https://github.com/ultralytics/yolov5/releases/download/v3.0/' + file
             print('Downloading %s to %s...' % (url, weights))
             torch.hub.download_url_to_file(url, weights)
             assert os.path.exists(weights) and os.path.getsize(weights) > 1E6  # check
         except Exception as e:  # GCP
             print('Download error: %s' % e)
-            assert redundant, 'No secondary mirror'
             url = 'https://storage.googleapis.com/ultralytics/yolov5/ckpt/' + file
             print('Downloading %s to %s...' % (url, weights))
             r = os.system('curl -L %s -o %s' % (url, weights))  # torch.hub.download_url_to_file(url, weights)

@@ -1,3 +1,4 @@
+import argparse
 import datetime
 import logging as rel_log
 import os
@@ -89,3 +90,4 @@ if __name__ == '__main__':
     with app.app_context():
         current_app.model = Detector()
     app.run(host='0.0.0.0', port=5003, debug=True)
+

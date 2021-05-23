@@ -18,7 +18,7 @@ class Detector(object):
     def init_model(self):
 
         # self.weights = 'weights/final.pt'
-        self.weights = '/DOTA_yolov5/proj/back-end/weights/final.pt'
+        self.weights = '/DOTA_yolov5/proj/back-end/weights/YOLOv5_DOTAv1.5_OBB.pt'
         self.device = '0' if torch.cuda.is_available() else 'cpu'
         self.device = select_device(self.device)
         model = attempt_load(self.weights, map_location=self.device)

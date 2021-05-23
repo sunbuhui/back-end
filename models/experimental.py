@@ -1,4 +1,5 @@
 # This file contains experimental modules
+# 此文件包含实验模块
 
 import numpy as np
 import torch
@@ -67,8 +68,8 @@ class GhostConv(nn.Module):
     def __init__(self, c1, c2, k=1, s=1, g=1, act=True):  # ch_in, ch_out, kernel, stride, groups
         super(GhostConv, self).__init__()
         c_ = c2 // 2  # hidden channels
-        self.cv1 = Conv(c1, c_, k, s, None, g, act)
-        self.cv2 = Conv(c_, c_, 5, 1, None, c_, act)
+        self.cv1 = Conv(c1, c_, k, s, g, act)
+        self.cv2 = Conv(c_, c_, 5, 1, c_, act)
 
     def forward(self, x):
         y = self.cv1(x)
@@ -115,6 +116,9 @@ class MixConv2d(nn.Module):
 
 
 class Ensemble(nn.ModuleList):
+    '''
+    return model_inference， None
+    '''
     # Ensemble of models
     def __init__(self):
         super(Ensemble, self).__init__()
@@ -130,20 +134,22 @@ class Ensemble(nn.ModuleList):
 
 
 def attempt_load(weights, map_location=None):
+    '''
+    ('weights_path', device)
     # Loads an ensemble of models weights=[a,b,c] or a single model weights=[a] or weights=a
+    # 加载一组模型权重=[a、b、c]或单个模型权重=[a]或权重=a
+    return model
+    模型前向传播输出为：
+        model_inference， None
+    '''
     model = Ensemble()
+
     for w in weights if isinstance(weights, list) else [weights]:
         attempt_download(w)
+        # 以FP32数据类型载入权重文件 并将数据送到对应设备， 同时
         model.append(torch.load(w, map_location=map_location)['model'].float().fuse().eval())  # load FP32 model
 
-    # Compatibility updates
-    for m in model.modules():
-        if type(m) in [nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6]:
-            m.inplace = True  # pytorch 1.7.0 compatibility
-        elif type(m) is Conv:
-            m._non_persistent_buffers_set = set()  # pytorch 1.6.0 compatibility
-
-    if len(model) == 1:
+    if len(model) == 1:  # 如果只有单个模型权重则加载单个模型权重
         return model[-1]  # return model
     else:
         print('Ensemble created with %s\n' % weights)
