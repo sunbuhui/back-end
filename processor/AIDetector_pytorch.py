@@ -63,7 +63,7 @@ class Detector(object):
                         [225, 255, 255], thickness=tf, lineType=cv2.LINE_AA)
         return image
 
-    def detect(self, im):
+    def detect(self, im,file_name,ext):
 
         im0, img = self.preprocess(im)
 
@@ -91,5 +91,8 @@ class Detector(object):
                         x2 - x1, y2 - y1), np.round(float(conf), 3)]
 
         im = self.plot_bboxes(im, pred_boxes)
+        cv2.imwrite('./tmp/draw/{}.{}'.format(file_name, ext), im)
+        print('./tmp/draw/{}.{}'.format(file_name, ext))
         print(type(im))
+        print(im)
         return im, image_info
