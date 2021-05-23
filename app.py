@@ -55,7 +55,7 @@ def upload_file():
             image_path, current_app.model, file.filename.rsplit('.', 1)[1])
         return jsonify({'status': 1,
                         'image_url': 'http://172.16.29.165:5003/tmp/ct/' + pid,
-                        'draw_url': 'http://172.16.29.165/tmp/draw/' + pid,
+                        'draw_url': 'http://172.16.29.165:5003/tmp/draw/' + pid,
                         'image_info': image_info})
 
     return jsonify({'status': 0})
