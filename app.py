@@ -5,7 +5,7 @@ import os
 import shutil
 from datetime import timedelta
 from flask import *
-from processor.AIDetector_pytorch import Detector
+from YoloDetector import YoloDetector
 
 import core.main
 
@@ -88,6 +88,6 @@ if __name__ == '__main__':
         if not os.path.exists(ff):
             os.makedirs(ff)
     with app.app_context():
-        current_app.model = Detector()
+        current_app.model = YoloDetector()
     app.run(host='0.0.0.0', port=5003, debug=True)
 

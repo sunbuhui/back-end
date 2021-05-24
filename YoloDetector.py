@@ -23,10 +23,10 @@ from utils.evaluation_utils import rbox2txt
 
 class YoloDetector(object):
     def __init__(self):
-        self.out = 'DOTA_demo_view/eva_detection'
+        self.out = 'tmp/draw/'
         # TODO
-        self.source = 'DOTA_demo_view/images/P0007__1__0___0.png'
-        self.weights = './weights/YOLOv5_DOTAv1.5_OBB.pt'
+        self.source = '/DOTA_yolov5/proj/back-end/DOTA_demo_view/images/P0007__1__0___0.png'
+        self.weights = '/DOTA_yolov5/proj/back-end/weights/YOLOv5_DOTAv1.5_OBB.pt'
         self.view_img = False
         self.save_txt = False
         self.imgsz = 1024
@@ -68,6 +68,95 @@ class YoloDetector(object):
         self.names = self.model.module.names if hasattr(self.model, 'module') else self.model.names
         # 设置画框的颜色    colors = [[178, 63, 143], [25, 184, 176], [238, 152, 129],....,[235, 137, 120]]随机设置RGB颜色
         self.colors = [[random.randint(0, 255) for _ in range(3)] for _ in range(len(self.names))]
+
+    def detect(self, path):
+        with torch.no_grad():
+            dataset = LoadImages(path, img_size=self.imgsz)
+            for path, img, im0s, vid_cap in dataset:
+                print(img.shape)
+            img = torch.from_numpy(img).to(self.device)
+            # 图片也设置为Float16
+            img = img.half() if self.half else img.float()  # uint8 to fp16/32
+            img /= 255.0  # 0 - 255 to 0.0 - 1.0
+            # 没有batch_size的话则在最前面添加一个轴
+            if img.ndimension() == 3:
+                # (in_channels,size1,size2) to (1,in_channels,img_height,img_weight)
+                img = img.unsqueeze(0)  # 在[0]维增加一个维度
+            t1 = time_synchronized()
+            pred = self.model(img, augment=False)[0]
+            pred = rotate_non_max_suppression(pred, 0.25, 0.4, classes=None, agnostic=True, without_iouthres=False)
+            t2 = time_synchronized()
+            # Process detections
+            for i, det in enumerate(pred):  # i:image index  det:(num_nms_boxes, [xylsθ,conf,classid]) θ∈[0,179]
+                if self.webcam:  # batch_size >= 1
+                    p, s, im0 = path[i], '%g: ' % i, im0s[i].copy()
+                else:
+                    p, s, im0 = path, '', im0s
+
+                save_path = str(Path(self.out) / Path(p).name)  # 图片保存路径+图片名字
+                txt_path = str(Path(self.out) / Path(p).stem) + (
+                    '_%g' % self.dataset.frame if self.dataset.mode == 'video' else '')
+                # print(txt_path)
+                s += '%gx%g ' % img.shape[2:]  # print string
+                gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
+
+                if det is not None and len(det):
+                    # Rescale boxes from img_size to im0 size
+                    det[:, :5] = scale_labels(img.shape[2:], det[:, :5], im0.shape).round()
+
+                    # Print results    det:(num_nms_boxes, [xylsθ,conf,classid]) θ∈[0,179]
+                    for c in det[:, -1].unique():  # unique函数去除其中重复的元素，并按元素（类别）由大到小返回一个新的无元素重复的元组或者列表
+                        n = (det[:, -1] == c).sum()  # detections per class  每个类别检测出来的素含量
+                        s += '%g %ss, ' % (n, self.names[int(c)])  # add to string 输出‘数量 类别,’
+
+                    # Write results  det:(num_nms_boxes, [xywhθ,conf,classid]) θ∈[0,179]
+                    for *rbox, conf, cls in reversed(det):  # 翻转list的排列结果,改为类别由小到大的排列
+                        # rbox=[tensor(x),tensor(y),tensor(w),tensor(h),tsneor(θ)] θ∈[0,179]
+                        # if save_txt:  # Write to file
+                        #     xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
+                        #     with open(txt_path + '.txt', 'a') as f:
+                        #         f.write(('%g ' * 5 + '\n') % (cls, *xywh))  # label format
+
+                        if self.save_img or self.view_img:  # Add bbox to image
+                            label = '%s %.2f' % (self.names[int(cls)], conf)
+                            classname = '%s' % self.names[int(cls)]
+                            conf_str = '%.3f' % conf
+                            rbox2txt(rbox, classname, conf_str, Path(p).stem,
+                                     str(self.out + '/result_txt/result_before_merge'))
+                            # plot_one_box(rbox, im0, label=label, color=colors[int(cls)], line_thickness=2)
+                            plot_one_rotated_box(rbox, im0, label=label, color=self.colors[int(cls)], line_thickness=1,
+                                                 pi_format=False)
+
+                # Print time (inference + NMS)
+                print('%sDone. (%.3fs)' % (s, t2 - t1))
+
+                # Stream results 播放结果
+                if self.view_img:
+                    cv2.imshow(p, im0)
+                    if cv2.waitKey(1) == ord('q'):  # q to quit
+                        raise StopIteration
+
+                # Save results (image with detections)
+                if self.save_img:
+                    if self.dataset.mode == 'images':
+                        if not cv2.imwrite(save_path, im0):
+                            raise Exception('存图失败')
+                        else:
+                            return save_path
+                            break
+
+                    else:
+                        if vid_path != save_path:  # new video
+                            vid_path = save_path
+                            if isinstance(vid_writer, cv2.VideoWriter):
+                                vid_writer.release()  # release previous video writer
+
+                            fourcc = 'mp4v'  # output video codec
+                            fps = vid_cap.get(cv2.CAP_PROP_FPS)
+                            w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                            h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                            vid_writer = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*fourcc), fps, (w, h))
+                        vid_writer.write(im0)
 
 
 def detect(save_img=False):
@@ -290,93 +379,100 @@ def funcd():
         detect()
 
 
+if __name__ == '__main__':
+    detect = YoloDetector()
+    detect.detect('DOTA_demo_view/images/P0019__1__824___1648.png')
+
 # if __name__ == '__main__':
 #     funcd()
-if __name__ == '__main__':
-    detector = YoloDetector()
-    with torch.no_grad():
-        # Run inference
-        t0 = time.time()
-        # 进行一次前向推理,测试程序是否正常  向量维度（1，3，imgsz，imgsz）
-        img = torch.zeros((1, 3, detector.imgsz, detector.imgsz), device=detector.device)  # init img
-        _ = detector.model(img.half() if detector.half else img) if detector.device.type != 'cpu' else None  # run once
-        for path, img, im0s, vid_cap in detector.dataset:
-            print(img.shape)
-            img = torch.from_numpy(img).to(detector.device)
-            # 图片也设置为Float16
-            img = img.half() if detector.half else img.float()  # uint8 to fp16/32
-            img /= 255.0  # 0 - 255 to 0.0 - 1.0
-            # 没有batch_size的话则在最前面添加一个轴
-            if img.ndimension() == 3:
-                # (in_channels,size1,size2) to (1,in_channels,img_height,img_weight)
-                img = img.unsqueeze(0)  # 在[0]维增加一个维度
-            t1 = time_synchronized()
-            pred = detector.model(img, augment=False)[0]
-            pred = rotate_non_max_suppression(pred, 0.25, 0.4, classes=None, agnostic=True, without_iouthres=False)
-            t2 = time_synchronized()
-            # Process detections
-            for i, det in enumerate(pred):  # i:image index  det:(num_nms_boxes, [xylsθ,conf,classid]) θ∈[0,179]
-                if detector.webcam:  # batch_size >= 1
-                    p, s, im0 = path[i], '%g: ' % i, im0s[i].copy()
-                else:
-                    p, s, im0 = path, '', im0s
-
-                save_path = str(Path(detector.out) / Path(p).name)  # 图片保存路径+图片名字
-                txt_path = str(Path(detector.out) / Path(p).stem) + ('_%g' % detector.dataset.frame if detector.dataset.mode == 'video' else '')
-                # print(txt_path)
-                s += '%gx%g ' % img.shape[2:]  # print string
-                gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
-
-                if det is not None and len(det):
-                    # Rescale boxes from img_size to im0 size
-                    det[:, :5] = scale_labels(img.shape[2:], det[:, :5], im0.shape).round()
-
-                    # Print results    det:(num_nms_boxes, [xylsθ,conf,classid]) θ∈[0,179]
-                    for c in det[:, -1].unique():  # unique函数去除其中重复的元素，并按元素（类别）由大到小返回一个新的无元素重复的元组或者列表
-                        n = (det[:, -1] == c).sum()  # detections per class  每个类别检测出来的素含量
-                        s += '%g %ss, ' % (n, detector.names[int(c)])  # add to string 输出‘数量 类别,’
-
-                    # Write results  det:(num_nms_boxes, [xywhθ,conf,classid]) θ∈[0,179]
-                    for *rbox, conf, cls in reversed(det):  # 翻转list的排列结果,改为类别由小到大的排列
-                        # rbox=[tensor(x),tensor(y),tensor(w),tensor(h),tsneor(θ)] θ∈[0,179]
-                        # if save_txt:  # Write to file
-                        #     xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
-                        #     with open(txt_path + '.txt', 'a') as f:
-                        #         f.write(('%g ' * 5 + '\n') % (cls, *xywh))  # label format
-
-                        if detector.save_img or detector.view_img:  # Add bbox to image
-                            label = '%s %.2f' % (detector.names[int(cls)], conf)
-                            classname = '%s' % detector.names[int(cls)]
-                            conf_str = '%.3f' % conf
-                            rbox2txt(rbox, classname, conf_str, Path(p).stem,
-                                     str(detector.out + '/result_txt/result_before_merge'))
-                            # plot_one_box(rbox, im0, label=label, color=colors[int(cls)], line_thickness=2)
-                            plot_one_rotated_box(rbox, im0, label=label, color=detector.colors[int(cls)], line_thickness=1,
-                                                 pi_format=False)
-
-                # Print time (inference + NMS)
-                print('%sDone. (%.3fs)' % (s, t2 - t1))
-
-                # Stream results 播放结果
-                if detector.view_img:
-                    cv2.imshow(p, im0)
-                    if cv2.waitKey(1) == ord('q'):  # q to quit
-                        raise StopIteration
-
-                # Save results (image with detections)
-                if detector.save_img:
-                    if detector.dataset.mode == 'images':
-                        cv2.imwrite(save_path, im0)
-                        pass
-                    else:
-                        if vid_path != save_path:  # new video
-                            vid_path = save_path
-                            if isinstance(vid_writer, cv2.VideoWriter):
-                                vid_writer.release()  # release previous video writer
-
-                            fourcc = 'mp4v'  # output video codec
-                            fps = vid_cap.get(cv2.CAP_PROP_FPS)
-                            w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                            h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                            vid_writer = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*fourcc), fps, (w, h))
-                        vid_writer.write(im0)
+# if __name__ == '__main__':
+#     detector = YoloDetector()
+#     with torch.no_grad():
+#         # Run inference
+#         t0 = time.time()
+#         # 进行一次前向推理,测试程序是否正常  向量维度（1，3，imgsz，imgsz）
+#         img = torch.zeros((1, 3, detector.imgsz, detector.imgsz), device=detector.device)  # init img
+#         _ = detector.model(img.half() if detector.half else img) if detector.device.type != 'cpu' else None  # run once
+#         print(detector.dataset[0])
+#         for path, img, im0s, vid_cap in detector.dataset:
+#             print(img.shape)
+#             img = torch.from_numpy(img).to(detector.device)
+#             # 图片也设置为Float16
+#             img = img.half() if detector.half else img.float()  # uint8 to fp16/32
+#             img /= 255.0  # 0 - 255 to 0.0 - 1.0
+#             # 没有batch_size的话则在最前面添加一个轴
+#             if img.ndimension() == 3:
+#                 # (in_channels,size1,size2) to (1,in_channels,img_height,img_weight)
+#                 img = img.unsqueeze(0)  # 在[0]维增加一个维度
+#             t1 = time_synchronized()
+#             pred = detector.model(img, augment=False)[0]
+#             pred = rotate_non_max_suppression(pred, 0.25, 0.4, classes=None, agnostic=True, without_iouthres=False)
+#             t2 = time_synchronized()
+#             # Process detections
+#             for i, det in enumerate(pred):  # i:image index  det:(num_nms_boxes, [xylsθ,conf,classid]) θ∈[0,179]
+#                 if detector.webcam:  # batch_size >= 1
+#                     p, s, im0 = path[i], '%g: ' % i, im0s[i].copy()
+#                 else:
+#                     p, s, im0 = path, '', im0s
+#
+#                 save_path = str(Path(detector.out) / Path(p).name)  # 图片保存路径+图片名字
+#                 txt_path = str(Path(detector.out) / Path(p).stem) + (
+#                     '_%g' % detector.dataset.frame if detector.dataset.mode == 'video' else '')
+#                 # print(txt_path)
+#                 s += '%gx%g ' % img.shape[2:]  # print string
+#                 gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
+#
+#                 if det is not None and len(det):
+#                     # Rescale boxes from img_size to im0 size
+#                     det[:, :5] = scale_labels(img.shape[2:], det[:, :5], im0.shape).round()
+#
+#                     # Print results    det:(num_nms_boxes, [xylsθ,conf,classid]) θ∈[0,179]
+#                     for c in det[:, -1].unique():  # unique函数去除其中重复的元素，并按元素（类别）由大到小返回一个新的无元素重复的元组或者列表
+#                         n = (det[:, -1] == c).sum()  # detections per class  每个类别检测出来的素含量
+#                         s += '%g %ss, ' % (n, detector.names[int(c)])  # add to string 输出‘数量 类别,’
+#
+#                     # Write results  det:(num_nms_boxes, [xywhθ,conf,classid]) θ∈[0,179]
+#                     for *rbox, conf, cls in reversed(det):  # 翻转list的排列结果,改为类别由小到大的排列
+#                         # rbox=[tensor(x),tensor(y),tensor(w),tensor(h),tsneor(θ)] θ∈[0,179]
+#                         # if save_txt:  # Write to file
+#                         #     xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
+#                         #     with open(txt_path + '.txt', 'a') as f:
+#                         #         f.write(('%g ' * 5 + '\n') % (cls, *xywh))  # label format
+#
+#                         if detector.save_img or detector.view_img:  # Add bbox to image
+#                             label = '%s %.2f' % (detector.names[int(cls)], conf)
+#                             classname = '%s' % detector.names[int(cls)]
+#                             conf_str = '%.3f' % conf
+#                             rbox2txt(rbox, classname, conf_str, Path(p).stem,
+#                                      str(detector.out + '/result_txt/result_before_merge'))
+#                             # plot_one_box(rbox, im0, label=label, color=colors[int(cls)], line_thickness=2)
+#                             plot_one_rotated_box(rbox, im0, label=label, color=detector.colors[int(cls)],
+#                                                  line_thickness=1,
+#                                                  pi_format=False)
+#
+#                 # Print time (inference + NMS)
+#                 print('%sDone. (%.3fs)' % (s, t2 - t1))
+#
+#                 # Stream results 播放结果
+#                 if detector.view_img:
+#                     cv2.imshow(p, im0)
+#                     if cv2.waitKey(1) == ord('q'):  # q to quit
+#                         raise StopIteration
+#
+#                 # Save results (image with detections)
+#                 if detector.save_img:
+#                     if detector.dataset.mode == 'images':
+#                         cv2.imwrite(save_path, im0)
+#                         pass
+#                     else:
+#                         if vid_path != save_path:  # new video
+#                             vid_path = save_path
+#                             if isinstance(vid_writer, cv2.VideoWriter):
+#                                 vid_writer.release()  # release previous video writer
+#
+#                             fourcc = 'mp4v'  # output video codec
+#                             fps = vid_cap.get(cv2.CAP_PROP_FPS)
+#                             w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+#                             h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+#                             vid_writer = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*fourcc), fps, (w, h))
+#                         vid_writer.write(im0)
